@@ -187,8 +187,15 @@ Turn this off with **Track the files commands change** in [Options](/cv4vs-agent
 - **A file git can only give as a pointer** (Git LFS) is listed without a copy: you can open it, but
   not undo it. So is a file larger than 100 MB that a command changed: copying what it was would
   fill the disk with a dataset or an installer.
-- **Closing Visual Studio forgets what you kept or undid.** Resuming a session rebuilds the list from
-  the CLI's history, so a file you had already accepted comes back as a change.
+- **Closing Visual Studio forgets part of what you decided.** Resuming a session rebuilds the list from
+  the CLI's history, which knows what Claude touched and nothing of what you did with it. A file you
+  **kept** (a deletion you kept included) does not come back unless it has changed since: the extension
+  remembers, for each chat, how each kept file looked (its length and a hash, nothing of its content)
+  under `changes/` in the data folder, and forgets a chat's file after 30 days without the chat being
+  open. A file over 256 MB is not remembered. A file you went through **change by change** in the editor is
+  remembered once no change is left in it, each one kept or undone; while some are still there, it comes back
+  with all of them, the ones you kept included, against the CLI's copy. And the files a command or a sub-agent
+  changed are not rebuilt at all, since the CLI's history has no record of them.
 
 ## Options
 
