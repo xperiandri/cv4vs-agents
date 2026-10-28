@@ -41,6 +41,7 @@ internal sealed class ChangeSet
     private string _sessionId;
     private bool _overflow;
     private string _disabledReason;
+    private string _commandsNote;
 
     /// <summary>Raised after any change to the rows or flags, on the thread that made it, outside the lock.</summary>
     public event Action Changed;
@@ -50,6 +51,11 @@ internal sealed class ChangeSet
 
     /// <summary>Why nothing is being tracked, or null when something is.</summary>
     public string DisabledReason { get { lock (_gate) { return _disabledReason; } } }
+
+    /// <summary>Why the files a shell command changes are not followed, or null when they are. Belongs to
+    /// the pane, not the session: a new conversation in the same folder is no more a repository than
+    /// the last one, so a reset leaves it alone.</summary>
+    public string CommandsNote { get { lock (_gate) { return _commandsNote; } } }
 
     public bool TryGet(string path, out FileChange row)
     {
@@ -79,27 +85,51 @@ internal sealed class ChangeSet
 
     public int Count { get { lock (_gate) { return _rows.Count; } } }
 
+    /// <summary>No room for another row: whatever is added now is dropped.</summary>
+    public bool IsFull { get { lock (_gate) { return _rows.Count >= MaxFiles; } } }
+
     /// <summary>Add a row. False when the set is full, which also raises <see cref="Overflow"/>; a
-    /// path already present is left as it is (its baseline is the first one, by design).</summary>
-    public bool Add(FileChange row)
+    /// path already present is left as it is (its baseline is the first one, by design). A caller that
+    /// owns a copy of the file for the row needs to tell "stored" from "already there": see
+    /// <see cref="TryAdd"/>.</summary>
+    public bool Add(FileChange row) => TryAdd(row) != AddResult.Full;
+
+    /// <summary>Add a row, and say what became of it: only <see cref="AddResult.Added"/> means the row now
+    /// holds <paramref name="row"/>'s baseline. For anything else the caller still owns its copy.</summary>
+    public AddResult TryAdd(FileChange row)
     {
-        bool added;
+        AddResult result;
         lock (_gate)
         {
-            if (_rows.ContainsKey(row.Path)) { return true; }
-            if (_rows.Count >= MaxFiles)
+            if (_rows.ContainsKey(row.Path))
+            {
+                result = AddResult.AlreadyListed;
+            }
+            else if (_rows.Count >= MaxFiles)
             {
                 _overflow = true;
-                added = false;
+                result = AddResult.Full;
             }
             else
             {
                 _rows[row.Path] = row.Clone();
-                added = true;
+                result = AddResult.Added;
             }
         }
+        // Even a refusal is news: the overflow flag may have just been raised.
         RaiseAfter();
-        return added;
+        return result;
+    }
+
+    /// <summary>Say that rows were dropped for want of room, without trying to add one.</summary>
+    public void NoteOverflow()
+    {
+        lock (_gate)
+        {
+            if (_overflow) { return; }
+            _overflow = true;
+        }
+        RaiseAfter();
     }
 
     /// <summary>Change a row in place, if there is one.</summary>
@@ -232,6 +262,16 @@ internal sealed class ChangeSet
         {
             if (string.Equals(_disabledReason, reason, StringComparison.Ordinal)) { return; }
             _disabledReason = reason;
+        }
+        RaiseAfter();
+    }
+
+    public void SetCommandsNote(string note)
+    {
+        lock (_gate)
+        {
+            if (string.Equals(_commandsNote, note, StringComparison.Ordinal)) { return; }
+            _commandsNote = note;
         }
         RaiseAfter();
     }
