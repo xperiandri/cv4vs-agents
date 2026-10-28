@@ -38,6 +38,7 @@ internal sealed class ChangeSet
         public DateTime AtUtc;
     }
 
+    private long _serial;
     private string _sessionId;
     private bool _overflow;
     private string _disabledReason;
@@ -112,7 +113,9 @@ internal sealed class ChangeSet
             }
             else
             {
-                _rows[row.Path] = row.Clone();
+                var stored = row.Clone();
+                stored.Serial = ++_serial;
+                _rows[row.Path] = stored;
                 result = AddResult.Added;
             }
         }
@@ -151,6 +154,21 @@ internal sealed class ChangeSet
         lock (_gate)
         {
             if (!_rows.TryGetValue(path, out removed)) { return null; }
+            _rows.Remove(path);
+            _overflow &= _rows.Count >= MaxFiles;
+        }
+        RaiseAfter();
+        return removed;
+    }
+
+    /// <summary>Drop a row if <paramref name="predicate"/> holds for it, under the lock, and return it. Null when there is no
+    /// such row or the predicate did not hold. The predicate runs on the live row: it must not call back into the set.</summary>
+    public FileChange RemoveIf(string path, Func<FileChange, bool> predicate)
+    {
+        FileChange removed;
+        lock (_gate)
+        {
+            if (!_rows.TryGetValue(path, out removed) || !predicate(removed)) { return null; }
             _rows.Remove(path);
             _overflow &= _rows.Count >= MaxFiles;
         }
