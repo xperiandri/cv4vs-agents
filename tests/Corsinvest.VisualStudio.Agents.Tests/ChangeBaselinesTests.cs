@@ -88,6 +88,23 @@ public sealed class ChangeBaselinesTests : IDisposable
     }
 
     [Fact]
+    public async Task Two_copies_of_the_same_file_do_not_share_a_name_so_one_cannot_overwrite_or_delete_the_other()
+    {
+        var file = Source("a.txt", "one");
+        var first = await _baselines.CaptureAsync("s1", file);
+        File.WriteAllText(file, "two");
+        var second = await _baselines.CaptureAsync("s1", file);
+
+        Assert.NotEqual(first.Path, second.Path);
+        Assert.EndsWith("~a.txt", second.Path);
+
+        _baselines.Release(first);
+
+        Assert.False(File.Exists(first.Path));
+        Assert.Equal("two", File.ReadAllText(second.Path));
+    }
+
+    [Fact]
     public async Task Releasing_deletes_a_copy_it_owns()
     {
         var copy = await _baselines.CaptureAsync("s1", Source("a.txt", "x"));
@@ -128,12 +145,52 @@ public sealed class ChangeBaselinesTests : IDisposable
         var recent = Path.Combine(_root, "recent");
         Directory.CreateDirectory(old);
         Directory.CreateDirectory(recent);
+        Directory.SetCreationTimeUtc(old, DateTime.UtcNow.AddDays(-30));
         Directory.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-30));
 
         _baselines.Sweep(TimeSpan.FromDays(14));
 
         Assert.False(Directory.Exists(old));
         Assert.True(Directory.Exists(recent));
+    }
+
+    [Fact]
+    public void A_folder_whose_owner_marker_is_held_open_is_not_swept_however_old_and_is_once_it_is_let_go()
+    {
+        var live = Path.Combine(_root, "live");
+        Directory.CreateDirectory(live);
+        var marker = Path.Combine(live, GitSnapshot.OwnerMarker);
+        File.WriteAllText(marker, "");
+        var old = DateTime.UtcNow.AddDays(-30);
+        File.SetCreationTimeUtc(marker, old);
+        File.SetLastWriteTimeUtc(marker, old);
+        Directory.SetCreationTimeUtc(live, old);
+        Directory.SetLastWriteTimeUtc(live, old);
+
+        using (new FileStream(marker, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
+        {
+            _baselines.Sweep(TimeSpan.FromDays(14));
+            Assert.True(Directory.Exists(live));
+        }
+
+        _baselines.Sweep(TimeSpan.FromDays(14));
+        Assert.False(Directory.Exists(live));
+    }
+
+    [Fact]
+    public void A_folder_with_a_copy_made_recently_in_it_is_kept_whatever_its_own_time_says()
+    {
+        // The folder's time moves only when an entry is added or removed, and a copy keeps the write time
+        // of its source: a chat open for weeks would look abandoned to another Visual Studio starting up.
+        var busy = Path.Combine(_root, "busy");
+        Directory.CreateDirectory(busy);
+        File.WriteAllText(Path.Combine(busy, "abc~a.txt"), "x");
+        Directory.SetCreationTimeUtc(busy, DateTime.UtcNow.AddDays(-30));
+        Directory.SetLastWriteTimeUtc(busy, DateTime.UtcNow.AddDays(-30));
+
+        _baselines.Sweep(TimeSpan.FromDays(14));
+
+        Assert.True(Directory.Exists(busy));
     }
 
     [Fact]
