@@ -40,8 +40,10 @@ internal sealed class ChangeFailure
 internal sealed class ChangeActions(ChangeSet set, ChangeBaselines baselines, IChangeEditor editor, OutputWindowLogger log,
                                     Func<string, Task> remeasure = null)
 {
-    /// <summary>Show the file against how it was before Claude's first edit, read-only, in VS's
-    /// comparison window. A file with no baseline, or one that is not text, is opened instead.</summary>
+    /// <summary>Show the file against how it was before Claude's first edit: in its own editor, with Copilot's review
+    /// drawn in it, where that can be done (see <see cref="IChangeEditor.ShowInPlaceAsync"/>), and
+    /// otherwise read-only in VS's comparison window. A file with no baseline, or one that is not text, is
+    /// opened instead.</summary>
     public async Task OpenAsync(string path)
     {
         // Only a listed path: the WebView names it, and a name is not a licence to open any file.
@@ -51,6 +53,8 @@ internal sealed class ChangeActions(ChangeSet set, ChangeBaselines baselines, IC
             await editor.OpenFileAsync(path);
             return;
         }
+
+        if (await editor.ShowInPlaceAsync(set, path)) { return; }
 
         string before, current;
         try
@@ -83,10 +87,10 @@ internal sealed class ChangeActions(ChangeSet set, ChangeBaselines baselines, IC
     }
 
     /// <summary>Accept the file as it is. Never fails: there is nothing to write.</summary>
-    public Task KeepAsync(string path)
+    public async Task KeepAsync(string path)
     {
+        await editor.EndReviewAsync(path).ConfigureAwait(false);
         Forget(path);
-        return Task.CompletedTask;
     }
 
     /// <summary>Put the file back. Null on success, or what went wrong; the row stays on a failure,
@@ -94,7 +98,14 @@ internal sealed class ChangeActions(ChangeSet set, ChangeBaselines baselines, IC
     public async Task<ChangeFailure> UndoAsync(string path)
     {
         if (!set.TryGet(path, out var row)) { return null; }
-        var reason = await GuardAsync(row).ConfigureAwait(false) ?? await RestoreAsync(row).ConfigureAwait(false);
+        var reason = await GuardAsync(row).ConfigureAwait(false);
+        // Only now, when the file is going to be put back: a review is not ended for an Undo that is refused. And before the
+        // file is rewritten, so that the review is not drawing against a document that is replaced under it.
+        if (reason is null)
+        {
+            await editor.EndReviewAsync(path).ConfigureAwait(false);
+            reason = await RestoreAsync(row).ConfigureAwait(false);
+        }
         if (reason is not null)
         {
             log.Warn($"[changes] could not undo {path}: {reason}");
@@ -186,7 +197,8 @@ internal sealed class ChangeActions(ChangeSet set, ChangeBaselines baselines, IC
             // with the same byte-order mark: a legacy code page decoded as UTF-8 loses its accents, and a
             // file whose mark was added or dropped since would come back without or with one it never had.
             var text = ChangeEvaluator.DecodeStrict(bytes);
-            if (text is not null && await Task.Run(() => File.Exists(path)).ConfigureAwait(false) && await SameMarkAsync(bytes, path).ConfigureAwait(false))
+            if (text is not null && await Task.Run(() => File.Exists(path)).ConfigureAwait(false)
+                && await ChangeEvaluator.SameMarkAsync(bytes, path).ConfigureAwait(false))
             {
                 switch (await editor.ReplaceDocumentTextAsync(path, text))
                 {
@@ -208,12 +220,5 @@ internal sealed class ChangeActions(ChangeSet set, ChangeBaselines baselines, IC
         {
             return ex.Message;
         }
-    }
-
-    /// <summary>Whether the file on disk starts with the same byte-order mark as the baseline.</summary>
-    private static async Task<bool> SameMarkAsync(byte[] baseline, string path)
-    {
-        var head = await AsyncFile.ReadHeadAsync(path, 4).ConfigureAwait(false);
-        return ChangeEvaluator.ByteOrderMark(head) == ChangeEvaluator.ByteOrderMark(baseline);
     }
 }

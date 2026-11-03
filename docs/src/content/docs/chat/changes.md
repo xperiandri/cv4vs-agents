@@ -49,6 +49,61 @@ and the next edit of that file is compared with how it is now.
 - If a file cannot be restored (it is locked, or open in a designer that cannot take the text) the
   row stays, with the reason, so you can see it did not happen. Undo all carries on with the rest.
 
+## In the editor
+
+A listed file that is open in an editor shows its changes in place, in the editor's own window, with
+**GitHub Copilot's own review**: the lines Claude removed are drawn among the file's own, each change has its
+**Keep** and **Undo**, and a bar at the bottom of the window has **Keep** and **Undo** for the whole file. The
+review is Copilot's, not this extension's: it looks and behaves as it does when Copilot's agent has changed a
+file, and Copilot counts the Keep and Undo you press as its own review actions. **Open** in the panel does the
+same for a file that is not open yet. A file opened later, or changed by Claude while it was open, is
+switched when it appears.
+
+- **Keep** on a change accepts it as it is. It stops being a difference; nothing is written to the file.
+- **Undo** on a change puts back what was there before Claude's change, in that change only, and Copilot
+  saves the file.
+- **Keep** and **Undo** in the bar at the bottom do the same for every change in the file. When Undo has put the file back
+  as it was, byte for byte, it leaves the list; **Keep** accepts the file, and it leaves the list.
+- When the last change has been kept or undone, the file leaves the list if it is now what it was before, byte
+  for byte. A difference that is only in how the lines end leaves it listed, for Keep and Undo in the panel.
+- **Keep** and **Undo** in the panel's row end the review first, and then do what they always do to the file.
+- Copilot's keys, by default: with the caret on a line of a change, **Ctrl+Y** keeps that change and **Ctrl+N**
+  undoes it; **Ctrl+Shift+Y** and **Ctrl+Shift+N** keep and undo the whole file. So during a review Ctrl+Y redoes
+  only away from a change: **Ctrl+Shift+Z** redoes anywhere.
+
+When more than one file is listed, the bar at the bottom also has two buttons of this extension's, the previous and the
+next file of the list. They open that file the way Open does. The file list Copilot's bar carries is Copilot's own
+working set, which has nothing of Claude's in it.
+
+**Review the changes in the editor** (Options > Chat > Files) turns this off: the editor is left alone, and Open
+shows the comparison window described above. Changing it applies at once to the files already shown.
+
+This needs **GitHub Copilot in Visual Studio 18**, signed in to GitHub: the review is Copilot's, and where it is not
+there nothing is drawn in the editor, Open shows the comparison window, and with Options > Debug > Log level at
+*Info* the log says that Copilot's review is not available.
+
+A file that cannot be reviewed this way is shown in the comparison window instead, and the log says why. The reasons:
+Copilot is already reviewing the file for its own agent; another difference (a Git diff) is already shown in it; the
+file, or its copy from before, is not plain UTF-8 or UTF-16 text; its byte-order mark is not what it was before
+Claude's change; it mixes CRLF and LF line endings; it is read-only; its window shows two languages in one file
+(Razor, for one); this Visual Studio's editor cannot show a difference in it; the list has no copy of the file
+from before; or Claude **created** the file, which has no earlier text to show a difference against (the list's Keep and
+Undo take it whole, and Undo deletes it). A file that was declined is tried again when it changes.
+
+A few things work differently there:
+
+- A file with changes of yours that are not saved is reviewed once you save it, and so is one that the editor has not
+  reloaded since Claude wrote it: the difference would not be the one the list measured.
+- After a **Keep** of a change, the baseline the list holds is the one the editor shows, so the counts, Open and
+  an Undo of the whole file all agree with it. It is kept in the file's own encoding and line ending.
+- A file that two chats list is shown for the one that listed or changed it last, or the one where you pressed
+  Open, and each row says *also in Chat N*, naming the other chat.
+- Closing the file's tab ends its review; opening it again, while it is still listed, starts it again.
+- **Ctrl+Z** does not go back past the start of a review. Claude changes the file on disk and the editor takes the new text
+  in as one edit, so Ctrl+Z would otherwise take back the whole of Claude's change at once, in the editor only. What you
+  do during the review (a change undone with Undo, your own typing) can still be taken back. A change you kept cannot: Keep
+  does not edit the file, and the list's Undo puts the file back to how it was before Claude's change with that change
+  in it.
 ## What it compares with
 
 The copy the CLI keeps before it first edits a file: the same ones [Rewind](/cv4vs-agents/chat/rewind/)
