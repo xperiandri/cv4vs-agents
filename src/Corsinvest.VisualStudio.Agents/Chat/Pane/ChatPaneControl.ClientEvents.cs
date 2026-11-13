@@ -175,8 +175,11 @@ public partial class ChatPaneControl
                     // to be taken before this returns. Bounded like the others: the save inside goes
                     // through the UI thread, and a stall must not hold the tool for the CLI's own
                     // hook timeout.
-                    var work = _changes.OnPreEditAsync(edit);
+                    using var letGo = new System.Threading.CancellationTokenSource();
+                    var work = _changes.OnPreEditAsync(edit, letGo.Token);
                     await Task.WhenAny(work, Task.Delay(4000));
+                    // The answer below lets the edit go: a copy that finishes after it holds the edit.
+                    letGo.Cancel();
                 }
             }
             else if (e.CallbackId == ClaudeClient.ChangesHookId && AgentsOptions.Chat.TrackChanges)
@@ -184,6 +187,28 @@ public partial class ChatPaneControl
                 var edit = HookEdit.TryParse(e.Input, e.ToolUseId);
                 // Not awaited: the file's row can wait for the CLI to write its record; Claude must not.
                 if (edit is not null && _changes is not null) { _ = _changes.OnPostEditAsync(edit); }
+            }
+            else if (e.CallbackId == ClaudeClient.BashBeginHookId && TracksCommands)
+            {
+                var call = HookBash.TryParse(e.Input, e.ToolUseId);
+                if (call is not null && _changes is not null)
+                {
+                    _changes.StartTracking();
+                    // The CLI runs the command once every hook has answered, so the picture of the working
+                    // tree is taken first. Bounded, well inside the CLI's own hook timeout: a repository too
+                    // big to photograph in this time runs its commands with no "before" rather than not at all.
+                    using var letGo = new System.Threading.CancellationTokenSource();
+                    var work = _changes.OnBashBeginAsync(call, letGo.Token);
+                    await Task.WhenAny(work, Task.Delay(30000));
+                    // The answer below lets the command go: a picture that finishes after it holds its writes.
+                    letGo.Cancel();
+                }
+            }
+            else if (e.CallbackId == ClaudeClient.BashEndHookId && TracksCommands)
+            {
+                var call = HookBash.TryParse(e.Input, e.ToolUseId);
+                // Not awaited: the files can be listed after Claude has gone on.
+                if (call is not null && _changes is not null) { _ = _changes.OnBashEndAsync(call); }
             }
             _client?.RespondToHookCallback(e.RequestId, new { @continue = true });
         }
@@ -193,6 +218,10 @@ public partial class ChatPaneControl
             _client?.RespondToHookCallback(e.RequestId, new { @continue = true });
         }
     }
+
+    /// <summary>Whether files changed by a shell command are followed: the Changes list is on, and so is
+    /// its own switch for commands.</summary>
+    private static bool TracksCommands => AgentsOptions.Chat.TrackChanges && AgentsOptions.Chat.TrackBashChanges;
 
     /// <summary>Saves the file's unsaved editor changes before the Changes list copies it, so the copy
     /// is what Claude is about to change and not an older file on disk. Bounded: the save goes through
@@ -220,7 +249,7 @@ public partial class ChatPaneControl
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 if (_disposed || _changes is null) { return; }
-                _bridge?.Send(BridgeMessages.ToWebView.ChangedFiles.Updated, Core.Changes.ChangedFilesMapper.Build(_changes.Set));
+                _bridge?.Send(BridgeMessages.ToWebView.ChangedFiles.Updated, Core.Changes.ChangedFilesMapper.Build(_changes.Set, _changes.CommandsNote));
             }));
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.Threading.Tasks.TaskCanceledException)

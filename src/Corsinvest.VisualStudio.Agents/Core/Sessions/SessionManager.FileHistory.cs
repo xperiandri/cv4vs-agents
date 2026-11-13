@@ -71,7 +71,8 @@ internal sealed partial class SessionManager
         if (path is null) { return tracks; }
         try
         {
-            // Shared: the CLI may be appending to the transcript while a resume reads it.
+            // Opened shared: the CLI may be appending to the transcript while a resume reads it, and File.ReadLines, which is not,
+            // would read nothing at all when it races the CLI's own writes.
             using var stream = await AsyncFile.OpenReadAsync(path).ConfigureAwait(false);
             using var reader = new StreamReader(stream, new UTF8Encoding(false));
             string line;
