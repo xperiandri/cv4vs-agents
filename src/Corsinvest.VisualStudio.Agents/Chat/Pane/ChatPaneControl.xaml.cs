@@ -848,6 +848,7 @@ public partial class ChatPaneControl : PaneControlBase
         _changes = new SessionChanges(PaneClaudePaths, Entry.WorkingDirectory, new SessionChangesOptions
         {
             FileCheckpoints = () => _client is not null && _client.FileCheckpoints,
+            TrackCommands = () => TracksCommands,
             PrepareFile = SaveBeforeCopyAsync,
         }, _log);
         _changes.Set.Changed += OnChangesChanged;

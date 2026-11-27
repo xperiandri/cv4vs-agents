@@ -20,6 +20,7 @@ export class ChangedFilesStore {
     private _overflow = false;
     private _maxFiles = 0;
     private _disabled: string | null = null;
+    private _commandsNote: string | null = null;
     private readonly _listeners = new Set<Listener>();
 
     get files(): readonly ChangedFileDto[] {
@@ -40,11 +41,17 @@ export class ChangedFilesStore {
         return this._disabled;
     }
 
+    /** Why the files a shell command changes are not listed, or null when they are. */
+    get commandsNote(): string | null {
+        return this._commandsNote;
+    }
+
     apply(list: ChangedFilesNotification): void {
         this._files = list.files;
         this._overflow = list.overflow;
         this._maxFiles = list.maxFiles;
         this._disabled = list.disabled;
+        this._commandsNote = list.commandsNote ?? null;
         this._notify();
     }
 
@@ -52,6 +59,7 @@ export class ChangedFilesStore {
         this._files = [];
         this._overflow = false;
         this._disabled = null;
+        this._commandsNote = null;
         this._notify();
     }
 
@@ -94,11 +102,45 @@ export function stateLetter(state: string): string {
 }
 
 /** What to say in place of the numbers when they cannot be shown as plain figures. */
-export function countsNote(file: Pick<ChangedFileDto, 'counts' | 'isBinary'>): string | null {
+export function countsNote(
+    file: Pick<ChangedFileDto, 'counts' | 'isBinary' | 'state' | 'added' | 'deleted'>,
+): string | null {
     if (file.isBinary) {
         return 'binary';
     }
-    return file.counts === 'unavailable' ? 'not counted' : null;
+    if (file.counts === 'unavailable') {
+        return 'not counted';
+    }
+    if (sameLines(file)) {
+        return 'no line differs';
+    }
+    return null;
+}
+
+/**
+ * Changed, and not one line differs: what moved is how the lines end, whether the last one has a
+ * newline, the byte-order mark or the encoding (the host counts lines of text). "+0 −0" would read
+ * as a file that is not different, beside an M.
+ */
+function sameLines(file: Pick<ChangedFileDto, 'counts' | 'state' | 'added' | 'deleted'>): boolean {
+    return (
+        file.counts === 'exact' &&
+        file.state === 'modified' &&
+        file.added === 0 &&
+        file.deleted === 0
+    );
+}
+
+/** What the figures cannot say on their own, for a tip. Empty when there is nothing to add. */
+export function countsTip(
+    file: Pick<ChangedFileDto, 'counts' | 'state' | 'added' | 'deleted'>,
+): string {
+    if (file.counts === 'approximate') {
+        return 'Approximate: the files differ too much to count exactly.';
+    }
+    return sameLines(file)
+        ? 'Every line reads the same: only the line endings, the final newline, the byte-order mark or the encoding changed.'
+        : '';
 }
 
 /** Why a file cannot be undone, or null when it can. */

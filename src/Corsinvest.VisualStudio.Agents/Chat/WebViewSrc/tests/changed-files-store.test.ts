@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
     ChangedFilesStore,
     countsNote,
+    countsTip,
     splitShownPath,
     stateLetter,
     undoBlocker,
@@ -33,7 +34,15 @@ function list(
     files: ChangedFileDto[],
     extra: Partial<ChangedFilesNotification> = {},
 ): ChangedFilesNotification {
-    return { sessionId: 's1', files, overflow: false, maxFiles: 200, disabled: null, ...extra };
+    return {
+        sessionId: 's1',
+        files,
+        overflow: false,
+        maxFiles: 200,
+        disabled: null,
+        commandsNote: null,
+        ...extra,
+    };
 }
 
 test('a new store has nothing to show', () => {
@@ -42,6 +51,7 @@ test('a new store has nothing to show', () => {
     assert.equal(store.files.length, 0);
     assert.equal(store.overflow, false);
     assert.equal(store.disabled, null);
+    assert.equal(store.commandsNote, null);
 });
 
 test('apply replaces the list and keeps the order the host sent', () => {
@@ -65,6 +75,20 @@ test('apply carries the overflow and the reason nothing is tracked', () => {
     store.apply(list([], { disabled: 'Keep file checkpoints is off.' }));
     assert.equal(store.disabled, 'Keep file checkpoints is off.');
     assert.equal(store.overflow, false);
+});
+
+test('apply carries why commands are not followed, and clear forgets it', () => {
+    const store = new ChangedFilesStore();
+
+    store.apply(list([file('C:\\a.txt')], { commandsNote: 'git was not found.' }));
+    assert.equal(store.commandsNote, 'git was not found.');
+
+    store.apply(list([file('C:\\a.txt')]));
+    assert.equal(store.commandsNote, null);
+
+    store.apply(list([], { commandsNote: 'not a repository' }));
+    store.clear();
+    assert.equal(store.commandsNote, null);
 });
 
 test('every change notifies once, and an unsubscribed listener hears nothing more', () => {
@@ -122,10 +146,31 @@ test('stateLetter names the three states and treats anything else as modified', 
 });
 
 test('countsNote says why there are no numbers, and nothing when there are', () => {
-    assert.equal(countsNote({ counts: 'exact', isBinary: false }), null);
-    assert.equal(countsNote({ counts: 'approximate', isBinary: false }), null);
-    assert.equal(countsNote({ counts: 'unavailable', isBinary: false }), 'not counted');
-    assert.equal(countsNote({ counts: 'unavailable', isBinary: true }), 'binary');
+    const base = { state: 'modified', added: 1, deleted: 1 };
+    assert.equal(countsNote({ ...base, counts: 'exact', isBinary: false }), null);
+    assert.equal(countsNote({ ...base, counts: 'approximate', isBinary: false }), null);
+    assert.equal(countsNote({ ...base, counts: 'unavailable', isBinary: false }), 'not counted');
+    assert.equal(countsNote({ ...base, counts: 'unavailable', isBinary: true }), 'binary');
+});
+
+test('a modified file with no line different is said so, instead of showing +0 -0', () => {
+    const none = { counts: 'exact', isBinary: false, added: 0, deleted: 0 } as const;
+
+    assert.equal(countsNote({ ...none, state: 'modified' }), 'no line differs');
+    // An empty file Claude created has no lines either, and nothing in it changed.
+    assert.equal(countsNote({ ...none, state: 'added' }), null);
+    // One line moved: the figures say so.
+    assert.equal(countsNote({ ...none, state: 'modified', added: 1 }), null);
+});
+
+test('countsTip explains the figures only where they need it', () => {
+    const base = { state: 'modified', added: 1, deleted: 1 } as const;
+    const none = { ...base, counts: 'exact', added: 0, deleted: 0 } as const;
+
+    assert.equal(countsTip({ ...base, counts: 'exact' }), '');
+    assert.match(countsTip({ ...base, counts: 'approximate' }), /Approximate/);
+    assert.match(countsTip(none), /byte-order mark/);
+    assert.equal(countsTip({ ...none, state: 'added' }), '');
 });
 
 test('undoBlocker is null when there is a baseline, else says which kind of absence', () => {
